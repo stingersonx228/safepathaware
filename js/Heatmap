@@ -1,557 +1,791 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { MapContainer, TileLayer, useMapEvents, Polyline, Circle, ZoomControl, Marker } from "react-leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  useMapEvents,
+  Polyline,
+  Circle,
+  ZoomControl,
+  Marker,
+} from "react-leaflet";
 import L from "leaflet";
 import "leaflet.heat";
 
-const DGIS_KEY = import.meta.env.VITE_DGIS_KEY; // если IDE ругается, это нормально. В рантайме Vite это понимает.
-const POLICE_NUMBER = "102";
+const DGIS_KEY = import.meta.env.VITE_DGIS_KEY;
 const HEAT_RADIUS = 45;
 const DGIS_EXCLUDE_LIMIT = 25;
 
+const POLICE_NUMBER = "102"; // Казахстан: 102
+const ROLES = { child: "child", admin: "admin" };
+
 const THREAT_TYPES = [
-    { key: "dogs", label: "Бродячие собаки", baseWeight: 3, icon: "🐕" },
-    { key: "homeless", label: "Асоциальные люди", baseWeight: 3, icon: "🧍" },
-    { key: "bad_crossing", label: "Опасный перекрёсток/переход", baseWeight: 4, icon: "🚸" },
-    { key: "hooligans", label: "Хулиганы/агрессия", baseWeight: 4, icon: "👥" },
-    { key: "fight_reports", label: "Сообщения о драках", baseWeight: 4, icon: "🥊" },
-    { key: "harassment_reports", label: "Сообщения о домогательствах", baseWeight: 5, icon: "⚠️" },
-    { key: "dark_area", label: "Темно/плохое освещение", baseWeight: 3, icon: "🌑" },
+  { key: "dogs", label: "Бродячие собаки", baseWeight: 3, icon: "🐕" },
+  { key: "homeless", label: "Асоциальные люди", baseWeight: 3, icon: "🧍" },
+  { key: "bad_crossing", label: "Опасный перекрёсток/переход", baseWeight: 4, icon: "🚸" },
+  { key: "hooligans", label: "Хулиганы/агрессия", baseWeight: 4, icon: "👥" },
+  { key: "fight_reports", label: "Сообщения о драках", baseWeight: 4, icon: "🥊" },
+  { key: "harassment_reports", label: "Сообщения о домогательствах", baseWeight: 5, icon: "⚠️" },
+  { key: "dark_area", label: "Темно/плохое освещение", baseWeight: 3, icon: "🌑" },
 ];
 
 const SOURCE_TYPES = [
-    { key: "self", label: "Лично видел(а)", factor: 1.15 },
-    { key: "neighbors", label: "Соседи/родители сообщили", factor: 1.05 },
-    { key: "school", label: "Школа/учителя сообщили", factor: 1.1 },
-    { key: "police_media", label: "Полиция/СМИ", factor: 1.3 },
-    { key: "anonymous", label: "Анонимное сообщение", factor: 0.85 },
+  { key: "self", label: "Лично видел(а)", factor: 1.15 },
+  { key: "neighbors", label: "Соседи/родители сообщили", factor: 1.05 },
+  { key: "school", label: "Школа/учителя сообщили", factor: 1.1 },
+  { key: "police_media", label: "Полиция/СМИ", factor: 1.3 },
+  { key: "anonymous", label: "Анонимное сообщение", factor: 0.85 },
 ];
 
 const SAFE_ZONE_TYPES = [
-    { key: "police", label: "Полиция/участок", radiusM: 200, safety: 5, icon: "👮" },
-    { key: "cameras", label: "Камеры наблюдения", radiusM: 140, safety: 4, icon: "📷" },
-    { key: "people", label: "Много людей (оживлённо)", radiusM: 160, safety: 3, icon: "🧑‍🤝‍🧑" },
-    { key: "lighting", label: "Хорошее освещение", radiusM: 150, safety: 3, icon: "💡" },
-    { key: "mall", label: "ТРЦ / крупный магазин", radiusM: 220, safety: 4, icon: "🏬" },
+  { key: "police", label: "Полиция/участок", radiusM: 200, safety: 5, icon: "👮" },
+  { key: "cameras", label: "Камеры наблюдения", radiusM: 140, safety: 4, icon: "📷" },
+  { key: "people", label: "Много людей (оживлённо)", radiusM: 160, safety: 3, icon: "🧑‍🤝‍🧑" },
+  { key: "lighting", label: "Хорошее освещение", radiusM: 150, safety: 3, icon: "💡" },
+  { key: "mall", label: "ТРЦ / крупный магазин", radiusM: 220, safety: 4, icon: "🏬" },
 ];
 
 function clamp(n, a, b) {
-    return Math.max(a, Math.min(b, n));
+  return Math.max(a, Math.min(b, n));
 }
 
 function sevToIntensity(sev) {
-    const s = clamp(Number(sev), 1, 5);
-    const map = { 1: 0.1, 2: 0.22, 3: 0.4, 4: 0.7, 5: 1.0 };
-    return map[s] ?? 0.4;
+  const s = clamp(Number(sev), 1, 5);
+  const map = { 1: 0.1, 2: 0.22, 3: 0.4, 4: 0.7, 5: 1.0 };
+  return map[s] ?? 0.4;
 }
 
 function severityColor(sev) {
-    const s = clamp(Number(sev), 1, 5);
-    return (
-        {
-            1: "#F6FF62",
-            2: "#FFE600",
-            3: "#FFB300",
-            4: "#FF7A00",
-            5: "#FF0000",
-        }[s] || "#FFE600"
-    );
+  const s = clamp(Number(sev), 1, 5);
+  return (
+    {
+      1: "#F6FF62",
+      2: "#FFE600",
+      3: "#FFB300",
+      4: "#FF7A00",
+      5: "#FF0000",
+    }[s] || "#FFE600"
+  );
 }
 
 function safeColor(safety) {
-    const s = clamp(Number(safety || 3), 1, 5);
-    return (
-        {
-            1: "#7fb3ff",
-            2: "#5aa0ff",
-            3: "#2f86ff",
-            4: "#1e6bff",
-            5: "#1148ff",
-        }[s] || "#2f86ff"
-    );
+  const s = clamp(Number(safety || 3), 1, 5);
+  return (
+    {
+      1: "#7fb3ff",
+      2: "#5aa0ff",
+      3: "#2f86ff",
+      4: "#1e6bff",
+      5: "#1148ff",
+    }[s] || "#2f86ff"
+  );
 }
 
 function haversineMeters(a, b) {
-    const R = 6371000;
-    const toRad = (x) => (x * Math.PI) / 180;
-    const dLat = toRad(b.lat - a.lat);
-    const dLng = toRad(b.lng - a.lng);
-    const s1 = Math.sin(dLat / 2);
-    const s2 = Math.sin(dLng / 2);
-    const q = s1 * s1 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * s2 * s2;
-    return 2 * R * Math.asin(Math.sqrt(q));
+  const R = 6371000;
+  const toRad = (x) => (x * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const s1 = Math.sin(dLat / 2);
+  const s2 = Math.sin(dLng / 2);
+  const q = s1 * s1 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * s2 * s2;
+  return 2 * R * Math.asin(Math.sqrt(q));
 }
 
 function computeRisk({ threatKey, userSeverity, sourceKey }) {
-    const threat = THREAT_TYPES.find((t) => t.key === threatKey) || THREAT_TYPES[0];
-    const src = SOURCE_TYPES.find((s) => s.key === sourceKey) || SOURCE_TYPES[0];
-    const sev = clamp(Number(userSeverity), 1, 5);
-    const base = clamp(Number(threat.baseWeight), 1, 5);
+  const threat = THREAT_TYPES.find((t) => t.key === threatKey) || THREAT_TYPES[0];
+  const src = SOURCE_TYPES.find((s) => s.key === sourceKey) || SOURCE_TYPES[0];
+  const sev = clamp(Number(userSeverity), 1, 5);
+  const base = clamp(Number(threat.baseWeight), 1, 5);
 
-    const score = ((base + sev) / 2) * (src.factor ?? 1.0);
-    const severity = clamp(Math.round(score), 1, 5);
-    return { riskScore: score, severity };
+  const score = ((base + sev) / 2) * (src.factor ?? 1.0);
+  const severity = clamp(Math.round(score), 1, 5);
+  return { riskScore: score, severity };
 }
 
 function buildExcludesByRisk(points, start, end, minAvoidSeverity, radiusMultiplier) {
-    const mult = Number(radiusMultiplier || 1);
-    const sorted = [...points].sort((a, b) => (b.riskScore ?? 0) - (a.riskScore ?? 0));
-    const out = [];
+  const mult = Number(radiusMultiplier || 1);
+  const sorted = [...points].sort((a, b) => (b.riskScore ?? 0) - (a.riskScore ?? 0));
+  const out = [];
 
-    for (const p of sorted) {
-        const sev = clamp(Number(p.severity ?? 3), 1, 5);
-        if (sev < minAvoidSeverity) continue;
+  for (const p of sorted) {
+    const sev = clamp(Number(p.severity ?? 3), 1, 5);
+    if (sev < minAvoidSeverity) continue;
 
-        const baseRadius = sev === 5 ? 380 : sev === 4 ? 250 : sev === 3 ? 160 : 0;
-        let extent = Math.round(baseRadius * mult);
-        if (!extent) continue;
+    const baseRadius = sev === 5 ? 220 : sev === 4 ? 150 : sev === 3 ? 90 : 0;
+    let extent = Math.round(baseRadius * mult);
+    if (!extent) continue;
 
-        const ds = haversineMeters(start, p);
-        const de = haversineMeters(end, p);
-        const margin = 25;
+    const ds = haversineMeters(start, p);
+    const de = haversineMeters(end, p);
+    const margin = 25;
 
-        if (ds <= extent + margin) extent = Math.min(extent, Math.max(60, Math.floor(ds - margin)));
-        if (de <= extent + margin) extent = Math.min(extent, Math.max(60, Math.floor(de - margin)));
-        if (extent < 60) continue;
+    if (ds <= extent + margin) extent = Math.min(extent, Math.max(60, Math.floor(ds - margin)));
+    if (de <= extent + margin) extent = Math.min(extent, Math.max(60, Math.floor(de - margin)));
+    if (extent < 60) continue;
 
-        out.push({
-            type: "point",
-            severity: "hard",
-            extent,
-            points: [{ lat: p.lat, lon: p.lng }],
-        });
+    out.push({
+      type: "point",
+      severity: "hard",
+      extent,
+      points: [{ lat: p.lat, lon: p.lng }],
+    });
 
-        if (out.length >= DGIS_EXCLUDE_LIMIT) break;
-    }
+    if (out.length >= DGIS_EXCLUDE_LIMIT) break;
+  }
 
-    return out;
+  return out;
 }
 
 function parseWktLineStringToLatLngs(wkt) {
-    if (!wkt || typeof wkt !== "string") return [];
-    const idx = wkt.indexOf("(");
-    const idx2 = wkt.lastIndexOf(")");
-    if (idx === -1 || idx2 === -1) return [];
-    const inside = wkt.slice(idx + 1, idx2).trim();
-    if (!inside) return [];
-    return inside.split(",").map((pair) => {
-        const parts = pair.trim().split(/\s+/).map(Number);
-        const lon = parts[0];
-        const lat = parts[1];
-        return [lat, lon];
-    });
+  if (!wkt || typeof wkt !== "string") return [];
+  const idx = wkt.indexOf("(");
+  const idx2 = wkt.lastIndexOf(")");
+  if (idx === -1 || idx2 === -1) return [];
+  const inside = wkt.slice(idx + 1, idx2).trim();
+  if (!inside) return [];
+  return inside.split(",").map((pair) => {
+    const parts = pair.trim().split(/\s+/).map(Number);
+    const lon = parts[0];
+    const lat = parts[1];
+    return [lat, lon];
+  });
 }
 
 function flatten2gisRouteToPolyline(resultItem) {
-    const out = [];
-    out.push(...parseWktLineStringToLatLngs(resultItem?.begin_pedestrian_path?.geometry?.selection));
+  const out = [];
+  out.push(...parseWktLineStringToLatLngs(resultItem?.begin_pedestrian_path?.geometry?.selection));
 
-    const maneuvers = resultItem?.maneuvers || [];
-    for (const m of maneuvers) {
-        const geoms = m?.outcoming_path?.geometry || [];
-        for (const g of geoms) out.push(...parseWktLineStringToLatLngs(g?.selection));
-    }
+  const maneuvers = resultItem?.maneuvers || [];
+  for (const m of maneuvers) {
+    const geoms = m?.outcoming_path?.geometry || [];
+    for (const g of geoms) out.push(...parseWktLineStringToLatLngs(g?.selection));
+  }
 
-    out.push(...parseWktLineStringToLatLngs(resultItem?.end_pedestrian_path?.geometry?.selection));
+  out.push(...parseWktLineStringToLatLngs(resultItem?.end_pedestrian_path?.geometry?.selection));
 
-    const cleaned = [];
-    for (const p of out) {
-        const last = cleaned[cleaned.length - 1];
-        if (!last || last[0] !== p[0] || last[1] !== p[1]) cleaned.push(p);
-    }
-    return cleaned;
+  const cleaned = [];
+  for (const p of out) {
+    const last = cleaned[cleaned.length - 1];
+    if (!last || last[0] !== p[0] || last[1] !== p[1]) cleaned.push(p);
+  }
+  return cleaned;
 }
 
 async function fetch2gisWalkingRoute({ start, end, excludes }) {
-    if (!DGIS_KEY) throw new Error("Нет VITE_DGIS_KEY в .env");
+  if (!DGIS_KEY) throw new Error("Нет VITE_DGIS_KEY в .env");
 
-    const url = `https://routing.api.2gis.com/routing/7.0.0/global?key=${encodeURIComponent(DGIS_KEY)}`;
+  const url = `https://routing.api.2gis.com/routing/7.0.0/global?key=${encodeURIComponent(DGIS_KEY)}`;
 
-    const body = {
-        locale: "ru",
-        route_mode: "fastest",
-        transport: "walking",
-        points: [
-            { lat: start.lat, lon: start.lng, type: "walking", start: true },
-            { lat: end.lat, lon: end.lng, type: "walking", start: false },
-        ],
-        exclude: excludes || [],
-    };
+  const body = {
+    locale: "ru",
+    route_mode: "fastest",
+    transport: "walking",
+    points: [
+      { lat: start.lat, lon: start.lng, type: "walking", start: true },
+      { lat: end.lat, lon: end.lng, type: "walking", start: false },
+    ],
+    exclude: excludes || [],
+  };
 
-    const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 
-    const data = await res.json();
-    if (!res.ok || data?.status !== "OK") {
-        const msg = data?.message || `2GIS routing error: ${data?.status || res.status}`;
-        throw new Error(msg);
-    }
+  const data = await res.json();
+  if (!res.ok || data?.status !== "OK") {
+    const msg = data?.message || `2GIS routing error: ${data?.status || res.status}`;
+    throw new Error(msg);
+  }
 
-    const main = data?.result?.[0];
-    if (!main) throw new Error("Пустой ответ 2GIS");
+  const main = data?.result?.[0];
+  if (!main) throw new Error("Пустой ответ 2GIS");
 
-    const polyline = flatten2gisRouteToPolyline(main);
+  const polyline = flatten2gisRouteToPolyline(main);
 
-    let dist = 0;
-    let dur = 0;
-    for (const m of main?.maneuvers || []) {
-        dist += Number(m?.outcoming_path?.distance || 0);
-        dur += Number(m?.outcoming_path?.duration || 0);
-    }
+  let dist = 0;
+  let dur = 0;
+  for (const m of main?.maneuvers || []) {
+    dist += Number(m?.outcoming_path?.distance || 0);
+    dur += Number(m?.outcoming_path?.duration || 0);
+  }
 
-    return { polyline, distanceM: dist, durationS: dur };
+  return { polyline, distanceM: dist, durationS: dur };
 }
 
 // ===== HEATMAP =====
 function HeatmapLayer({ points }) {
-    const map = useMapEvents({});
-    const layerRef = useRef(null);
-    const data = useMemo(() => points.map((p) => [p.lat, p.lng, p.intensity]), [points]);
+  const map = useMapEvents({});
+  const layerRef = useRef(null);
+  const data = useMemo(() => points.map((p) => [p.lat, p.lng, p.intensity]), [points]);
 
-    useEffect(() => {
-        if (layerRef.current) {
-            layerRef.current.remove();
-            layerRef.current = null;
-        }
-        if (!data.length) return;
+  useEffect(() => {
+    if (layerRef.current) {
+      layerRef.current.remove();
+      layerRef.current = null;
+    }
+    if (!data.length) return;
 
-        // eslint-disable-next-line no-undef
-        layerRef.current = L.heatLayer(data, {
-            radius: HEAT_RADIUS,
-            blur: 35,
-            minOpacity: 0.1,
-            max: 1.0,
-            gradient: {
-                0.0: "#F6FF62",
-                0.25: "#FFE600",
-                0.5: "#FFB300",
-                0.75: "#FF7A00",
-                0.9: "#FF2A00",
-                1.0: "#8B0000",
-            },
-        }).addTo(map);
+    // eslint-disable-next-line no-undef
+    layerRef.current = L.heatLayer(data, {
+      radius: HEAT_RADIUS,
+      blur: 35,
+      minOpacity: 0.1,
+      max: 1.0,
+      gradient: {
+        0.0: "#F6FF62",
+        0.25: "#FFE600",
+        0.5: "#FFB300",
+        0.75: "#FF7A00",
+        0.9: "#FF2A00",
+        1.0: "#8B0000",
+      },
+    }).addTo(map);
 
-        return () => {
-            if (layerRef.current) layerRef.current.remove();
-            layerRef.current = null;
-        };
-    }, [map, data]);
+    return () => {
+      if (layerRef.current) layerRef.current.remove();
+      layerRef.current = null;
+    };
+  }, [map, data]);
 
-    return null;
+  return null;
 }
 
-function ClickHandler({ mode, onAddThreat, onAddSafe, onSetStart, onSetEnd }) {
-    useMapEvents({
-        click(e) {
-            if (mode === "addThreat") onAddThreat(e.latlng);
-            if (mode === "addSafe") onAddSafe(e.latlng);
-            if (mode === "start") onSetStart(e.latlng);
-            if (mode === "end") onSetEnd(e.latlng);
-        },
-    });
-    return null;
+function ClickHandler({ mode, onAddThreat, onAddSafe, onSetStart, onSetEnd, onAddReport }) {
+  useMapEvents({
+    click(e) {
+      if (mode === "addThreat") onAddThreat(e.latlng);
+      if (mode === "addSafe") onAddSafe(e.latlng);
+      if (mode === "start") onSetStart(e.latlng);
+      if (mode === "end") onSetEnd(e.latlng);
+      if (mode === "report") onAddReport(e.latlng);
+    },
+  });
+  return null;
 }
 
 function BoundsTracker({ onBounds }) {
-    useMapEvents({
-        moveend(e) {
-            onBounds(e.target.getBounds());
-        },
-        zoomend(e) {
-            onBounds(e.target.getBounds());
-        },
-    });
-    return null;
+  useMapEvents({
+    moveend(e) {
+      onBounds(e.target.getBounds());
+    },
+    zoomend(e) {
+      onBounds(e.target.getBounds());
+    },
+  });
+  return null;
 }
 
-// ===== район рейтинг (мягче к безопасности) =====
-function computeAreaSafetyScore(bounds, threats, safeZones) {
-    if (!bounds) return { score: 82, label: "—", threatsCount: 0, safeCount: 0 };
+function computeAreaSafetyScore(bounds, adminThreats, safeZones, childReportsVisible) {
+  if (!bounds) return { score: 82, label: "—", threatsCount: 0, safeCount: 0 };
 
-    const inBounds = (lat, lng) => bounds.contains(L.latLng(lat, lng));
-    const threatsIn = threats.filter((p) => inBounds(p.lat, p.lng));
-    const safeIn = safeZones.filter((z) => inBounds(z.lat, z.lng));
+  const inBounds = (lat, lng) => bounds.contains(L.latLng(lat, lng));
+  const threatsIn = adminThreats.filter((p) => inBounds(p.lat, p.lng));
+  const safeIn = safeZones.filter((z) => inBounds(z.lat, z.lng));
+  const reportsIn = childReportsVisible.filter((r) => inBounds(r.lat, r.lng));
 
-    let score = 88;
+  let score = 88;
 
-    for (const p of threatsIn) {
-        const sev = clamp(Number(p.severity ?? 3), 1, 5);
-        score -= sev * 1.8;
-    }
-    for (const z of safeIn) {
-        const s = clamp(Number(z.safety ?? 3), 1, 5);
-        score += s * 3.0;
-    }
+  for (const p of threatsIn) {
+    const sev = clamp(Number(p.severity ?? 3), 1, 5);
+    score -= sev * 1.8;
+  }
+  for (const r of reportsIn) {
+    const sev = clamp(Number(r.severity ?? 3), 1, 5);
+    score -= sev * 0.55; // маленький импакт
+  }
+  for (const z of safeIn) {
+    const s = clamp(Number(z.safety ?? 3), 1, 5);
+    score += s * 3.0;
+  }
 
-    const n = threatsIn.length + safeIn.length;
-    if (n > 0) {
-        const damp = 1 - Math.exp(-n / 10);
-        score = 88 + (score - 88) * damp;
-    }
+  const n = threatsIn.length + safeIn.length + reportsIn.length;
+  if (n > 0) {
+    const damp = 1 - Math.exp(-n / 10);
+    score = 88 + (score - 88) * damp;
+  }
 
-    score = clamp(Math.round(score), 0, 100);
+  score = clamp(Math.round(score), 0, 100);
 
-    let label = "Ок";
-    if (score >= 90) label = "Очень безопасно";
-    else if (score >= 80) label = "Безопасно";
-    else if (score >= 65) label = "Нормально";
-    else if (score >= 50) label = "Опасно";
-    else label = "Очень опасно";
+  let label = "Ок";
+  if (score >= 90) label = "Очень безопасно";
+  else if (score >= 80) label = "Безопасно";
+  else if (score >= 65) label = "Нормально";
+  else if (score >= 50) label = "Опасно";
+  else label = "Очень опасно";
 
-    return { score, label, threatsCount: threatsIn.length, safeCount: safeIn.length };
+  return { score, label, threatsCount: threatsIn.length + reportsIn.length, safeCount: safeIn.length };
 }
 
 function ratingColor(score) {
-    if (score >= 90) return "#1148ff";
-    if (score >= 80) return "#1e6bff";
-    if (score >= 65) return "#2f86ff";
-    if (score >= 50) return "#FFB300";
-    return "#FF0000";
+  if (score >= 90) return "#1148ff";
+  if (score >= 80) return "#1e6bff";
+  if (score >= 65) return "#2f86ff";
+  if (score >= 50) return "#FFB300";
+  return "#FF0000";
 }
 
-// ===== icon factory =====
-function makeEmojiDivIcon({ emoji, color, glow = true, size = 22, border = 2, font = 14 }) {
-    const html = `
-    <div class="pin-wrap">
+function makeEmojiDivIcon({ emoji, color, glow = true, size = 22, border = 2, font = 14, opacity = 1 }) {
+  const html = `
+    <div class="pin-wrap" style="opacity:${opacity}">
       <div class="pin ${glow ? "glow" : ""}" style="--pinColor:${color}; width:${size}px; height:${size}px; border-width:${border}px;">
         <div class="pin-emoji" style="font-size:${font}px;">${emoji}</div>
       </div>
     </div>
   `;
-    return L.divIcon({
-        className: "pin-root",
-        html,
-        iconSize: [size + 4, size + 4],
-        iconAnchor: [(size + 4) / 2, (size + 4) / 2],
-    });
+  return L.divIcon({
+    className: "pin-root",
+    html,
+    iconSize: [size + 4, size + 4],
+    iconAnchor: [(size + 4) / 2, (size + 4) / 2],
+  });
+}
+
+// ✅ ВАЖНО: чтобы на телефоне работало — используем tel:102 всегда.
+// В браузере ПК tel: тоже может открывать приложение, но если не открылось — покажем копирование.
+function callPolice102() {
+  const tel = `tel:${POLICE_NUMBER}`;
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+  // На мобилке — 100% tel:
+  if (isMobile) {
+    window.location.href = tel;
+    return;
+  }
+
+  // На десктопе — пробуем tel: и параллельно копируем
+  try {
+    window.location.href = tel;
+  } catch {}
+  try {
+    navigator.clipboard?.writeText(POLICE_NUMBER);
+  } catch {}
+  alert(`Полиция: ${POLICE_NUMBER}\nЕсли звонок не открылся — номер скопирован (если браузер разрешил).`);
 }
 
 export default function HeatmapMap() {
-    const center = [51.23, 51.37]; // Уральск
+  const center = [51.23, 51.37]; // Уральск
 
-    const [panelOpen, setPanelOpen] = useState(true);
-    const [mode, setMode] = useState("addThreat");
-    const [bounds, setBounds] = useState(null);
+  const [role, setRole] = useState(() => {
+    try {
+      return localStorage.getItem("appRole") || "";
+    } catch {
+      return "";
+    }
+  });
 
-    const [threatKey, setThreatKey] = useState(THREAT_TYPES[0].key);
-    const [userSeverity, setUserSeverity] = useState(4);
-    const [sourceKey, setSourceKey] = useState(SOURCE_TYPES[0].key);
-    const [note, setNote] = useState("");
+  const isChild = role === ROLES.child;
+  const isAdmin = role === ROLES.admin;
 
-    const [safeTypeKey, setSafeTypeKey] = useState(SAFE_ZONE_TYPES[0].key);
-    const safeType = useMemo(
-        () => SAFE_ZONE_TYPES.find((z) => z.key === safeTypeKey) || SAFE_ZONE_TYPES[0],
-        [safeTypeKey]
+  function chooseRole(r) {
+    setRole(r);
+    try {
+      localStorage.setItem("appRole", r);
+    } catch {}
+  }
+
+  function resetRole() {
+    try {
+      localStorage.removeItem("appRole");
+    } catch {}
+    setRole("");
+  }
+
+  const [panelOpen, setPanelOpen] = useState(true);
+  const [mode, setMode] = useState("addThreat");
+  const [bounds, setBounds] = useState(null);
+
+  // admin threat form
+  const [threatKey, setThreatKey] = useState(THREAT_TYPES[0].key);
+  const [userSeverity, setUserSeverity] = useState(4);
+  const [sourceKey, setSourceKey] = useState(SOURCE_TYPES[0].key);
+  const [note, setNote] = useState("");
+
+  // admin safe form
+  const [safeTypeKey, setSafeTypeKey] = useState(SAFE_ZONE_TYPES[0].key);
+  const safeType = useMemo(
+    () => SAFE_ZONE_TYPES.find((z) => z.key === safeTypeKey) || SAFE_ZONE_TYPES[0],
+    [safeTypeKey]
+  );
+
+  // child report form
+  const [reportThreatKey, setReportThreatKey] = useState(THREAT_TYPES[0].key);
+  const [reportSeverity, setReportSeverity] = useState(3);
+  const [reportNote, setReportNote] = useState("");
+
+  // routing settings
+  const [minAvoidSeverity, setMinAvoidSeverity] = useState(4);
+  const [radiusMultiplier, setRadiusMultiplier] = useState(1.0);
+
+  // storage: admin threats + safe zones
+  const [threatPoints, setThreatPoints] = useState(() => {
+    try {
+      const saved = localStorage.getItem("threatPointsClean");
+      const raw = saved ? JSON.parse(saved) : [];
+      return raw.filter((p) => THREAT_TYPES.some((t) => t.key === p.threatKey));
+    } catch {
+      return [];
+    }
+  });
+
+  const [safeZones, setSafeZones] = useState(() => {
+    try {
+      const saved = localStorage.getItem("safeZonesClean");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // storage: child reports
+  const [childReports, setChildReports] = useState(() => {
+    try {
+      const saved = localStorage.getItem("childReportsClean");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [start, setStart] = useState(null);
+  const [end, setEnd] = useState(null);
+
+  const [routeLatLngs, setRouteLatLngs] = useState([]);
+  const [routeInfo, setRouteInfo] = useState(null);
+  const [routingState, setRoutingState] = useState({ loading: false, error: "" });
+
+  useEffect(() => {
+    localStorage.setItem("threatPointsClean", JSON.stringify(threatPoints));
+  }, [threatPoints]);
+
+  useEffect(() => {
+    localStorage.setItem("safeZonesClean", JSON.stringify(safeZones));
+  }, [safeZones]);
+
+  useEffect(() => {
+    localStorage.setItem("childReportsClean", JSON.stringify(childReports));
+  }, [childReports]);
+
+  const previewRisk = useMemo(
+    () => computeRisk({ threatKey, userSeverity, sourceKey }),
+    [threatKey, userSeverity, sourceKey]
+  );
+
+  const qualifiesCount = useMemo(() => {
+    const minS = Number(minAvoidSeverity);
+    return threatPoints.filter((p) => Number(p.severity ?? 0) >= minS).length;
+  }, [threatPoints, minAvoidSeverity]);
+
+  const visibleReports = useMemo(
+    () => childReports.filter((r) => r.status === "pending" || r.status === "approved"),
+    [childReports]
+  );
+
+  const approvedReportsAsThreats = useMemo(() => {
+    return childReports
+      .filter((r) => r.status === "approved")
+      .map((r) => ({
+        ...r,
+        riskScore: (Number(r.riskScore || r.severity || 3) || 3) * 0.45, // мягко
+      }));
+  }, [childReports]);
+
+  const routingThreats = useMemo(
+    () => [...threatPoints, ...approvedReportsAsThreats],
+    [threatPoints, approvedReportsAsThreats]
+  );
+
+  const areaRating = useMemo(
+    () => computeAreaSafetyScore(bounds, threatPoints, safeZones, visibleReports),
+    [bounds, threatPoints, safeZones, visibleReports]
+  );
+
+  const startIcon = useMemo(
+    () => makeEmojiDivIcon({ emoji: "🟢", color: "#00C853", glow: true, size: 30, border: 3, font: 16 }),
+    []
+  );
+  const endIcon = useMemo(
+    () => makeEmojiDivIcon({ emoji: "🟣", color: "#7A00FF", glow: true, size: 30, border: 3, font: 16 }),
+    []
+  );
+
+  function addThreat(ll) {
+    const r = computeRisk({ threatKey, userSeverity, sourceKey });
+    const newPoint = {
+      id: Date.now() + Math.random(),
+      lat: ll.lat,
+      lng: ll.lng,
+      createdAt: new Date().toISOString(),
+      threatKey,
+      userSeverity: Number(userSeverity),
+      sourceKey,
+      note: note.trim(),
+      riskScore: r.riskScore,
+      severity: r.severity,
+      intensity: sevToIntensity(r.severity),
+      origin: "admin",
+    };
+    setThreatPoints((prev) => [newPoint, ...prev]);
+    setNote("");
+  }
+
+  function addSafe(ll) {
+    const zone = {
+      id: Date.now() + Math.random(),
+      lat: ll.lat,
+      lng: ll.lng,
+      createdAt: new Date().toISOString(),
+      typeKey: safeType.key,
+      label: safeType.label,
+      radiusM: safeType.radiusM,
+      safety: safeType.safety,
+      icon: safeType.icon,
+    };
+    setSafeZones((prev) => [zone, ...prev]);
+  }
+
+  function addChildReport(ll) {
+    const r = computeRisk({ threatKey: reportThreatKey, userSeverity: reportSeverity, sourceKey: "anonymous" });
+    const rep = {
+      id: Date.now() + Math.random(),
+      lat: ll.lat,
+      lng: ll.lng,
+      createdAt: new Date().toISOString(),
+      threatKey: reportThreatKey,
+      userSeverity: Number(reportSeverity),
+      note: reportNote.trim(),
+      riskScore: r.riskScore,
+      severity: r.severity,
+      status: "pending",
+      origin: "child",
+    };
+    setChildReports((prev) => [rep, ...prev]);
+    setReportNote("");
+    setMode("start");
+  }
+
+  function clearThreats() {
+    setThreatPoints([]);
+  }
+  function clearSafeZones() {
+    setSafeZones([]);
+  }
+  function clearRoute() {
+    setRouteLatLngs([]);
+    setRouteInfo(null);
+    setRoutingState({ loading: false, error: "" });
+  }
+
+  function acceptReport(id) {
+    setChildReports((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, status: "approved", reviewedAt: new Date().toISOString() } : r))
     );
-
-    const [minAvoidSeverity, setMinAvoidSeverity] = useState(4);
-    const [radiusMultiplier, setRadiusMultiplier] = useState(1.0);
-
-    const [threatPoints, setThreatPoints] = useState(() => {
-        try {
-            const saved = localStorage.getItem("threatPointsClean");
-            const raw = saved ? JSON.parse(saved) : [];
-            return raw.filter((p) => THREAT_TYPES.some((t) => t.key === p.threatKey));
-        } catch {
-            return [];
-        }
-    });
-
-    const [safeZones, setSafeZones] = useState(() => {
-        try {
-            const saved = localStorage.getItem("safeZonesClean");
-            return saved ? JSON.parse(saved) : [];
-        } catch {
-            return [];
-        }
-    });
-
-    const [start, setStart] = useState(null);
-    const [end, setEnd] = useState(null);
-
-    const [routeLatLngs, setRouteLatLngs] = useState([]);
-    const [routeInfo, setRouteInfo] = useState(null);
-    const [routingState, setRoutingState] = useState({ loading: false, error: "" });
-
-    useEffect(() => {
-        localStorage.setItem("threatPointsClean", JSON.stringify(threatPoints));
-    }, [threatPoints]);
-
-    useEffect(() => {
-        localStorage.setItem("safeZonesClean", JSON.stringify(safeZones));
-    }, [safeZones]);
-
-    const previewRisk = useMemo(() => computeRisk({ threatKey, userSeverity, sourceKey }), [threatKey, userSeverity, sourceKey]);
-
-    const qualifiesCount = useMemo(() => {
-        const minS = Number(minAvoidSeverity);
-        return threatPoints.filter((p) => Number(p.severity ?? 0) >= minS).length;
-    }, [threatPoints, minAvoidSeverity]);
-
-    const areaRating = useMemo(() => computeAreaSafetyScore(bounds, threatPoints, safeZones), [bounds, threatPoints, safeZones]);
-
-    const startIcon = useMemo(
-        () => makeEmojiDivIcon({ emoji: "🟢", color: "#00C853", glow: true, size: 30, border: 3, font: 16 }),
-        []
+  }
+  function rejectReport(id) {
+    setChildReports((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, status: "rejected", reviewedAt: new Date().toISOString() } : r))
     );
-    const endIcon = useMemo(
-        () => makeEmojiDivIcon({ emoji: "🟣", color: "#7A00FF", glow: true, size: 30, border: 3, font: 16 }),
-        []
-    );
+  }
 
-    function addThreat(ll) {
-        const r = computeRisk({ threatKey, userSeverity, sourceKey });
-        const newPoint = {
-            id: Date.now() + Math.random(),
-            lat: ll.lat,
-            lng: ll.lng,
-            createdAt: new Date().toISOString(),
-            threatKey,
-            userSeverity: Number(userSeverity),
-            sourceKey,
-            note: note.trim(),
-            riskScore: r.riskScore,
-            severity: r.severity,
-            intensity: sevToIntensity(r.severity),
-        };
-        setThreatPoints((prev) => [newPoint, ...prev]);
-        setNote("");
+  async function buildSafeRoute() {
+    if (!start || !end) {
+      setRoutingState({ loading: false, error: "Поставь Start и End" });
+      return;
     }
 
-    function addSafe(ll) {
-        const zone = {
-            id: Date.now() + Math.random(),
-            lat: ll.lat,
-            lng: ll.lng,
-            createdAt: new Date().toISOString(),
-            typeKey: safeType.key,
-            label: safeType.label,
-            radiusM: safeType.radiusM,
-            safety: safeType.safety,
-            icon: safeType.icon,
-        };
-        setSafeZones((prev) => [zone, ...prev]);
-    }
+    setRoutingState({ loading: true, error: "" });
+    clearRoute();
 
-    function clearThreats() {
-        setThreatPoints([]);
-    }
-    function clearSafeZones() {
-        setSafeZones([]);
-    }
-    function clearRoute() {
-        setRouteLatLngs([]);
-        setRouteInfo(null);
-        setRoutingState({ loading: false, error: "" });
-    }
+    try {
+      const baseExcludes = buildExcludesByRisk(
+        routingThreats,
+        start,
+        end,
+        Number(minAvoidSeverity),
+        Number(radiusMultiplier)
+      );
 
-    async function buildSafeRoute() {
-        if (!start || !end) {
-            setRoutingState({ loading: false, error: "Поставь Start и End" });
-            return;
-        }
-        setRoutingState({ loading: true, error: "" });
-        clearRoute();
+      const attempts = [
+        { name: "full", excludes: baseExcludes },
+        { name: "top12", excludes: baseExcludes.slice(0, 12) },
+        { name: "top6", excludes: baseExcludes.slice(0, 6) },
+        { name: "radius0.75", excludes: buildExcludesByRisk(routingThreats, start, end, Number(minAvoidSeverity), 0.75) },
+        { name: "radius0.55", excludes: buildExcludesByRisk(routingThreats, start, end, Number(minAvoidSeverity), 0.55) },
+        { name: "only5", excludes: buildExcludesByRisk(routingThreats, start, end, 5, 0.8) },
+        { name: "none", excludes: [] },
+      ];
 
+      let lastErr = null;
+
+      for (const a of attempts) {
         try {
-            const excludes = buildExcludesByRisk(threatPoints, start, end, Number(minAvoidSeverity), Number(radiusMultiplier));
-            const { polyline, distanceM, durationS } = await fetch2gisWalkingRoute({ start, end, excludes });
-            if (!polyline.length) throw new Error("Маршрут пустой (нет геометрии)");
-            setRouteLatLngs(polyline);
-            setRouteInfo({ distanceM, durationS, note: `avoids severity≥${minAvoidSeverity} | qualifies=${qualifiesCount} | excludes=${excludes.length}/${DGIS_EXCLUDE_LIMIT}` });
-            setRoutingState({ loading: false, error: "" });
+          const { polyline, distanceM, durationS } = await fetch2gisWalkingRoute({
+            start,
+            end,
+            excludes: a.excludes,
+          });
+          if (!polyline?.length) throw new Error("Маршрут пустой (нет геометрии)");
+
+          setRouteLatLngs(polyline);
+          setRouteInfo({
+            distanceM,
+            durationS,
+            note: `attempt=${a.name} | avoids severity≥${minAvoidSeverity} | excludes=${a.excludes.length}/${DGIS_EXCLUDE_LIMIT}`,
+          });
+          setRoutingState({ loading: false, error: "" });
+          return;
         } catch (e) {
-            setRoutingState({ loading: false, error: String(e?.message || e) });
+          lastErr = e;
         }
+      }
+
+      throw lastErr || new Error("Не удалось построить маршрут");
+    } catch (e) {
+      setRoutingState({ loading: false, error: String(e?.message || e) });
     }
+  }
 
-    function callPolice() {
-        const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-        if (isMobile) {
-            window.location.href = `tel:${POLICE_NUMBER}`;
-            return;
-        }
-        try {
-            navigator.clipboard?.writeText(POLICE_NUMBER);
-        } catch {}
-        alert(`Номер полиции: ${POLICE_NUMBER}\n(Скопировано, если браузер разрешил)`);
-    }
+  const fmtDistance = (m) => (m < 1000 ? `${Math.round(m)} м` : `${(m / 1000).toFixed(2)} км`);
+  const fmtDuration = (s) => {
+    const min = Math.round(s / 60);
+    if (min < 60) return `${min} мин`;
+    return `${Math.floor(min / 60)} ч ${min % 60} мин`;
+  };
 
-    const fmtDistance = (m) => (m < 1000 ? `${Math.round(m)} м` : `${(m / 1000).toFixed(2)} км`);
-    const fmtDuration = (s) => {
-        const min = Math.round(s / 60);
-        if (min < 60) return `${min} мин`;
-        return `${Math.floor(min / 60)} ч ${min % 60} мин`;
-    };
+  const panelWidth = 470;
+  const panelStyle = {
+    position: "absolute",
+    zIndex: 999,
+    top: 12,
+    left: 12,
+    width: panelWidth,
+    background: "white",
+    padding: 12,
+    borderRadius: 12,
+    boxShadow: "0 6px 20px rgba(0,0,0,0.15)",
+    fontFamily: "system-ui, Arial",
+    transform: panelOpen ? "translateX(0)" : `translateX(calc(-100% - 24px))`,
+    transition: "transform 260ms ease",
+  };
 
-    // styles
-    const panelWidth = 470;
-    const panelStyle = {
-        position: "absolute",
-        zIndex: 999,
-        top: 12,
-        left: 12,
-        width: panelWidth,
-        background: "white",
-        padding: 12,
-        borderRadius: 12,
-        boxShadow: "0 6px 20px rgba(0,0,0,0.15)",
-        fontFamily: "system-ui, Arial",
-        transform: panelOpen ? "translateX(0)" : `translateX(calc(-100% - 24px))`,
-        transition: "transform 260ms ease",
-    };
+  const handleStyle = {
+    position: "absolute",
+    zIndex: 1000,
+    top: 18,
+    left: panelOpen ? 12 + panelWidth + 10 : 12,
+    transition: "left 260ms ease",
+    background: "white",
+    border: "1px solid #ddd",
+    borderRadius: 12,
+    boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
+    cursor: "pointer",
+    padding: "10px 12px",
+    fontWeight: 900,
+    userSelect: "none",
+  };
 
-    const handleStyle = {
-        position: "absolute",
-        zIndex: 1000,
-        top: 18,
-        left: panelOpen ? 12 + panelWidth + 10 : 12,
-        transition: "left 260ms ease",
-        background: "white",
-        border: "1px solid #ddd",
-        borderRadius: 12,
-        boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
-        cursor: "pointer",
-        padding: "10px 12px",
-        fontWeight: 900,
-        userSelect: "none",
-    };
+  const ratingStyle = {
+    position: "absolute",
+    zIndex: 1200,
+    right: 16,
+    top: 16,
+    background: "white",
+    border: "1px solid #ddd",
+    borderRadius: 14,
+    padding: "10px 12px",
+    boxShadow: "0 10px 26px rgba(0,0,0,0.12)",
+    fontFamily: "system-ui, Arial",
+    minWidth: 230,
+  };
 
-    const policeBtnStyle = {
-        position: "absolute",
-        zIndex: 1200,
-        right: 16,
-        bottom: 18,
-        background: "#FF0000",
-        color: "white",
-        border: "none",
-        borderRadius: 16,
-        padding: "12px 14px",
-        fontWeight: 1000,
-        cursor: "pointer",
-        boxShadow: "0 10px 26px rgba(0,0,0,0.25)",
-    };
+  const pendingCount = useMemo(() => childReports.filter((r) => r.status === "pending").length, [childReports]);
 
-    const ratingStyle = {
-        position: "absolute",
-        zIndex: 1200,
-        right: 16,
-        top: 16,
-        background: "white",
-        border: "1px solid #ddd",
-        borderRadius: 14,
-        padding: "10px 12px",
-        boxShadow: "0 10px 26px rgba(0,0,0,0.12)",
-        fontFamily: "system-ui, Arial",
-        minWidth: 230,
-    };
+  // ✅ КНОПКА 102 ТОЛЬКО ДЛЯ РЕБЁНКА (фикс, который ты просил)
+  const childPoliceBtnStyle = {
+    position: "absolute",
+    zIndex: 1400,
+    right: 16,
+    bottom: 18,
+    background: "#FF0000",
+    color: "white",
+    border: "none",
+    borderRadius: 18,
+    padding: "14px 16px",
+    fontWeight: 1000,
+    cursor: "pointer",
+    boxShadow: "0 12px 28px rgba(0,0,0,0.25)",
+  };
 
+  if (!role) {
     return (
-        <div style={{ height: "100vh", width: "100vw" }}>
-            {/* inline CSS for pins */}
-            <style>{`
+      <div
+        style={{
+          height: "100vh",
+          width: "100vw",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "system-ui, Arial",
+          background: "#0b0f14",
+        }}
+      >
+        <div
+          style={{
+            width: 520,
+            maxWidth: "92vw",
+            background: "white",
+            borderRadius: 16,
+            padding: 18,
+            boxShadow: "0 16px 40px rgba(0,0,0,0.35)",
+          }}
+        >
+          <div style={{ fontWeight: 1000, fontSize: 20 }}>Выберите режим</div>
+          <div style={{ marginTop: 6, opacity: 0.8, fontSize: 13 }}>
+            Ребёнок — маршрут + репорты + кнопка 102. Админ — модерация репортов.
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+            <button
+              onClick={() => chooseRole(ROLES.child)}
+              style={{
+                flex: 1,
+                padding: 14,
+                borderRadius: 14,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 1000,
+                fontSize: 14,
+              }}
+            >
+              👧 Ребёнок
+            </button>
+            <button
+              onClick={() => chooseRole(ROLES.admin)}
+              style={{
+                flex: 1,
+                padding: 14,
+                borderRadius: 14,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 1000,
+                fontSize: 14,
+              }}
+            >
+              🛠️ Админ
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // icons
+  const reportOpacity = 0.45;
+
+  return (
+    <div style={{ height: "100vh", width: "100vw" }}>
+      <style>{`
         .pin-root { background: transparent !important; border: none !important; }
         .pin-wrap { display:flex; align-items:center; justify-content:center; }
         .pin {
@@ -570,341 +804,659 @@ export default function HeatmapMap() {
         .pin-emoji{ line-height:1; transform: translateY(-0.5px); }
       `}</style>
 
-            {/* rating */}
-            <div style={ratingStyle}>
-                <div style={{ fontWeight: 900, fontSize: 13, marginBottom: 4 }}>Рейтинг безопасности района</div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                    <div style={{ fontSize: 26, fontWeight: 1000, color: ratingColor(areaRating.score) }}>{areaRating.score}</div>
-                    <div style={{ fontSize: 13, fontWeight: 900, opacity: 0.85 }}>/ 100</div>
-                    <div style={{ marginLeft: "auto", fontSize: 12, fontWeight: 900, opacity: 0.8 }}>{areaRating.label}</div>
-                </div>
-                <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>
-                    В зоне: угроз {areaRating.threatsCount ?? 0} • safe {areaRating.safeCount ?? 0}
-                </div>
-            </div>
+      {/* rating */}
+      <div style={ratingStyle}>
+        <div style={{ fontWeight: 900, fontSize: 13, marginBottom: 4 }}>Рейтинг безопасности района</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <div style={{ fontSize: 26, fontWeight: 1000, color: ratingColor(areaRating.score) }}>{areaRating.score}</div>
+          <div style={{ fontSize: 13, fontWeight: 900, opacity: 0.85 }}>/ 100</div>
+          <div style={{ marginLeft: "auto", fontSize: 12, fontWeight: 900, opacity: 0.8 }}>{areaRating.label}</div>
+        </div>
+        <div style={{ fontSize: 11, opacity: 0.7, marginTop: 2 }}>
+          В зоне: угроз {areaRating.threatsCount ?? 0} • safe {areaRating.safeCount ?? 0}
+        </div>
+      </div>
 
-            {/* police */}
-            <button style={policeBtnStyle} onClick={callPolice} title="Вызов полиции">
-                🚨 Полиция ({POLICE_NUMBER})
+      {/* ✅ КНОПКА ВЫЗОВА 102 ТОЛЬКО В РЕЖИМЕ РЕБЁНКА */}
+      {isChild ? (
+        <button style={childPoliceBtnStyle} onClick={callPolice102} title="Вызов полиции 102">
+          🚨 Позвонить 102
+        </button>
+      ) : null}
+
+      {/* CHILD panel */}
+      {isChild ? (
+        <div
+          style={{
+            position: "absolute",
+            zIndex: 1200,
+            left: 12,
+            top: 12,
+            width: 390,
+            maxWidth: "92vw",
+            background: "white",
+            border: "1px solid #ddd",
+            borderRadius: 14,
+            padding: 12,
+            boxShadow: "0 10px 26px rgba(0,0,0,0.12)",
+            fontFamily: "system-ui, Arial",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ fontWeight: 1000 }}>{mode === "report" ? "Репорт" : "Маршрут"}</div>
+            <button
+              onClick={resetRole}
+              style={{
+                marginLeft: "auto",
+                border: "1px solid #ddd",
+                background: "white",
+                borderRadius: 10,
+                padding: "6px 10px",
+                cursor: "pointer",
+                fontWeight: 900,
+              }}
+            >
+              Сменить режим
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button
+              onClick={() => setMode("start")}
+              style={{
+                flex: 1,
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 900,
+                background: mode === "start" ? "#f2f2f2" : "white",
+              }}
+            >
+              Start
+            </button>
+            <button
+              onClick={() => setMode("end")}
+              style={{
+                flex: 1,
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 900,
+                background: mode === "end" ? "#f2f2f2" : "white",
+              }}
+            >
+              End
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button
+              onClick={() => setMode("report")}
+              style={{
+                flex: 1,
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 1000,
+                background: mode === "report" ? "#f2f2f2" : "white",
+              }}
+              title="Заполни и кликни по карте"
+            >
+              📝 Репорт
             </button>
 
-            {/* panel toggle */}
-            <div style={handleStyle} onClick={() => setPanelOpen((v) => !v)}>
-                {panelOpen ? "⟨" : "⟩"} Меню
-            </div>
+            <button
+              onClick={buildSafeRoute}
+              style={{
+                flex: 1,
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 1000,
+              }}
+            >
+              {routingState.loading ? "Строю..." : "Маршрут"}
+            </button>
+          </div>
 
-            {/* panel */}
-            <div style={panelStyle}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{ fontWeight: 900, flex: 1 }}>Safe Route — угрозы + safe-зоны</div>
-                    <button
-                        onClick={() => setPanelOpen(false)}
-                        style={{
-                            border: "1px solid #ddd",
-                            background: "white",
-                            borderRadius: 10,
-                            padding: "6px 10px",
-                            cursor: "pointer",
-                            fontWeight: 900,
-                        }}
-                    >
-                        ✕
-                    </button>
-                </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button
+              onClick={() => {
+                setStart(null);
+                setEnd(null);
+                clearRoute();
+              }}
+              style={{
+                flex: 1,
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 900,
+              }}
+            >
+              Сброс
+            </button>
+            <button
+              onClick={() => setMode("start")}
+              style={{
+                flex: 1,
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 900,
+              }}
+            >
+              Обычный режим
+            </button>
+          </div>
 
-                <div style={{ display: "flex", gap: 8, marginTop: 10, marginBottom: 10 }}>
-                    <button
-                        onClick={() => setMode("addThreat")}
-                        style={{
-                            flex: 1,
-                            padding: 10,
-                            borderRadius: 10,
-                            border: "1px solid #ddd",
-                            cursor: "pointer",
-                            fontWeight: 800,
-                            background: mode === "addThreat" ? "#f2f2f2" : "white",
-                        }}
-                    >
-                        Угроза
-                    </button>
-                    <button
-                        onClick={() => setMode("addSafe")}
-                        style={{
-                            flex: 1,
-                            padding: 10,
-                            borderRadius: 10,
-                            border: "1px solid #ddd",
-                            cursor: "pointer",
-                            fontWeight: 800,
-                            background: mode === "addSafe" ? "#f2f2f2" : "white",
-                        }}
-                    >
-                        Safe-зона
-                    </button>
-                </div>
+          {mode === "report" ? (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 6 }}>
+                Выбери тип и опасность, потом кликни по карте
+              </div>
 
-                <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-                    <button
-                        onClick={() => setMode("start")}
-                        style={{
-                            flex: 1,
-                            padding: 10,
-                            borderRadius: 10,
-                            border: "1px solid #ddd",
-                            cursor: "pointer",
-                            fontWeight: 800,
-                            background: mode === "start" ? "#f2f2f2" : "white",
-                        }}
-                    >
-                        Start
-                    </button>
-                    <button
-                        onClick={() => setMode("end")}
-                        style={{
-                            flex: 1,
-                            padding: 10,
-                            borderRadius: 10,
-                            border: "1px solid #ddd",
-                            cursor: "pointer",
-                            fontWeight: 800,
-                            background: mode === "end" ? "#f2f2f2" : "white",
-                        }}
-                    >
-                        End
-                    </button>
-                </div>
-
-                {mode === "addThreat" ? (
-                    <>
-                        <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>Тип угрозы</div>
-                        <select
-                            value={threatKey}
-                            onChange={(e) => setThreatKey(e.target.value)}
-                            style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
-                        >
-                            {THREAT_TYPES.map((t) => (
-                                <option key={t.key} value={t.key}>
-                                    {t.icon} {t.label} (base {t.baseWeight})
-                                </option>
-                            ))}
-                        </select>
-
-                        <div style={{ marginTop: 8, fontSize: 13, fontWeight: 800 }}>
-                            Насколько опасно сейчас: <b>{userSeverity}</b>
-                        </div>
-                        <input
-                            type="range"
-                            min="1"
-                            max="5"
-                            step="1"
-                            value={userSeverity}
-                            onChange={(e) => setUserSeverity(Number(e.target.value))}
-                            style={{ width: "100%" }}
-                        />
-
-                        <div style={{ marginTop: 8, fontSize: 13, fontWeight: 800 }}>Источник</div>
-                        <select
-                            value={sourceKey}
-                            onChange={(e) => setSourceKey(e.target.value)}
-                            style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
-                        >
-                            {SOURCE_TYPES.map((s) => (
-                                <option key={s.key} value={s.key}>
-                                    {s.label} (x{s.factor})
-                                </option>
-                            ))}
-                        </select>
-
-                        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
-                            Итог: riskScore <b>{previewRisk.riskScore.toFixed(2)}</b> → severity{" "}
-                            <b style={{ color: severityColor(previewRisk.severity) }}>{previewRisk.severity}</b>
-                        </div>
-
-                        <textarea
-                            value={note}
-                            onChange={(e) => setNote(e.target.value)}
-                            placeholder="Комментарий (необязательно)"
-                            style={{
-                                width: "100%",
-                                marginTop: 8,
-                                padding: 10,
-                                borderRadius: 10,
-                                border: "1px solid #ddd",
-                                minHeight: 60,
-                                resize: "vertical",
-                            }}
-                        />
-                    </>
-                ) : null}
-
-                {mode === "addSafe" ? (
-                    <>
-                        <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>Тип safe-зоны</div>
-                        <select
-                            value={safeTypeKey}
-                            onChange={(e) => setSafeTypeKey(e.target.value)}
-                            style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
-                        >
-                            {SAFE_ZONE_TYPES.map((z) => (
-                                <option key={z.key} value={z.key}>
-                                    {z.icon} {z.label} (радиус {z.radiusM}м, +{z.safety}/5)
-                                </option>
-                            ))}
-                        </select>
-
-                        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
-                            Клик по карте добавит: <b>{safeType.icon} {safeType.label}</b> • радиус <b>{safeType.radiusM}м</b>
-                        </div>
-                    </>
-                ) : null}
-
-                <div style={{ marginTop: 12, fontSize: 13, fontWeight: 900 }}>Обход опасностей</div>
-
-                <div style={{ fontSize: 12, marginTop: 6 }}>
-                    Обходить начиная с severity: <b>{minAvoidSeverity}</b>{" "}
-                    <span style={{ opacity: 0.7 }}>
-            (подходит точек: <b>{qualifiesCount}</b>)
-          </span>
-                </div>
-                <input
-                    type="range"
-                    min="1"
-                    max="5"
-                    step="1"
-                    value={minAvoidSeverity}
-                    onChange={(e) => setMinAvoidSeverity(Number(e.target.value))}
-                    style={{ width: "100%" }}
-                />
-
-                <div style={{ fontSize: 12, marginTop: 6 }}>
-                    Множитель радиуса: <b>{Number(radiusMultiplier).toFixed(2)}</b>
-                </div>
-                <input
-                    type="range"
-                    min="0.6"
-                    max="2.5"
-                    step="0.05"
-                    value={radiusMultiplier}
-                    onChange={(e) => setRadiusMultiplier(Number(e.target.value))}
-                    style={{ width: "100%" }}
-                />
-
-                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                    <button
-                        onClick={clearThreats}
-                        style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #ddd", cursor: "pointer", fontWeight: 900 }}
-                    >
-                        Очистить угрозы
-                    </button>
-                    <button
-                        onClick={clearSafeZones}
-                        style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #ddd", cursor: "pointer", fontWeight: 900 }}
-                    >
-                        Очистить safe-зоны
-                    </button>
-                </div>
-
-                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                    <button
-                        onClick={() => {
-                            setStart(null);
-                            setEnd(null);
-                            clearRoute();
-                        }}
-                        style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #ddd", cursor: "pointer", fontWeight: 900 }}
-                    >
-                        Сброс Start/End
-                    </button>
-
-                    <button
-                        onClick={buildSafeRoute}
-                        style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #ddd", cursor: "pointer", fontWeight: 1000 }}
-                    >
-                        {routingState.loading ? "Строю..." : "Маршрут"}
-                    </button>
-                </div>
-
-                {routingState.error ? (
-                    <div style={{ marginTop: 8, fontSize: 12, color: "#b00020", whiteSpace: "pre-wrap" }}>
-                        {routingState.error}
-                    </div>
-                ) : null}
-
-                {routeInfo ? (
-                    <div style={{ marginTop: 8, fontSize: 12 }}>
-                        Длина: <b>{fmtDistance(routeInfo.distanceM)}</b> • Время: <b>{fmtDuration(routeInfo.durationS)}</b>
-                        <br />
-                        <span style={{ opacity: 0.75 }}>{routeInfo.note}</span>
-                    </div>
-                ) : null}
-            </div>
-
-            {/* MAP */}
-            <MapContainer center={center} zoom={13} style={{ height: "100%", width: "100%" }} zoomControl={false}>
-                <ZoomControl position="topright" />
-
-                <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-
-                <BoundsTracker onBounds={setBounds} />
-                <HeatmapLayer points={threatPoints} />
-
-                <ClickHandler
-                    mode={mode}
-                    onAddThreat={addThreat}
-                    onAddSafe={addSafe}
-                    onSetStart={(ll) => {
-                        setStart({ lat: ll.lat, lng: ll.lng });
-                        setMode("end");
-                    }}
-                    onSetEnd={(ll) => {
-                        setEnd({ lat: ll.lat, lng: ll.lng });
-                        setMode("addThreat");
-                    }}
-                />
-
-                {routeLatLngs.length ? <Polyline positions={routeLatLngs} pathOptions={{ weight: 6, opacity: 0.9 }} /> : null}
-
-                {/* Start/End */}
-                {start ? <Marker position={[start.lat, start.lng]} icon={startIcon} /> : null}
-                {end ? <Marker position={[end.lat, end.lng]} icon={endIcon} /> : null}
-
-                {/* Safe zones */}
-                {safeZones.map((z) => (
-                    <Circle
-                        key={z.id}
-                        center={[z.lat, z.lng]}
-                        radius={Number(z.radiusM)}
-                        pathOptions={{ color: safeColor(z.safety), weight: 2, opacity: 0.6, fill: true, fillOpacity: 0.1 }}
-                    />
+              <select
+                value={reportThreatKey}
+                onChange={(e) => setReportThreatKey(e.target.value)}
+                style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
+              >
+                {THREAT_TYPES.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.icon} {t.label}
+                  </option>
                 ))}
+              </select>
 
-                {/* Safe markers */}
-                {safeZones.map((z) => {
-                    const icon = makeEmojiDivIcon({
-                        emoji: z.icon || "🟦",
-                        color: safeColor(z.safety),
-                        glow: false,
-                        size: 20,
-                        border: 2,
-                        font: 13,
-                    });
-                    return <Marker key={`safe_${z.id}`} position={[z.lat, z.lng]} icon={icon} />;
-                })}
+              <div style={{ marginTop: 8, fontSize: 12, fontWeight: 900 }}>
+                Опасность: <b>{reportSeverity}</b>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="5"
+                step="1"
+                value={reportSeverity}
+                onChange={(e) => setReportSeverity(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
 
-                {/* Threat markers */}
-                {threatPoints.map((p) => {
-                    const t = THREAT_TYPES.find((x) => x.key === p.threatKey);
-                    const icon = makeEmojiDivIcon({
-                        emoji: t?.icon || "⚠️",
-                        color: severityColor(p.severity),
-                        glow: true,
-                        size: 22,
-                        border: 2,
-                        font: 14,
-                    });
-                    return <Marker key={`thr_${p.id}`} position={[p.lat, p.lng]} icon={icon} />;
-                })}
-            </MapContainer>
+              <textarea
+                value={reportNote}
+                onChange={(e) => setReportNote(e.target.value)}
+                placeholder="Комментарий (необязательно)"
+                style={{
+                  width: "100%",
+                  marginTop: 8,
+                  padding: 10,
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  minHeight: 60,
+                  resize: "vertical",
+                }}
+              />
+
+              <div style={{ marginTop: 8, fontSize: 11, opacity: 0.75 }}>
+                Репорт добавится как pending (полупрозрачный). Админ потом примет или отклонит.
+              </div>
+            </div>
+          ) : null}
+
+          {routingState.error ? (
+            <div style={{ marginTop: 8, fontSize: 12, color: "#b00020", whiteSpace: "pre-wrap" }}>
+              {routingState.error}
+            </div>
+          ) : null}
+
+          {routeInfo ? (
+            <div style={{ marginTop: 10, fontSize: 12 }}>
+              Длина: <b>{fmtDistance(routeInfo.distanceM)}</b> • Время: <b>{fmtDuration(routeInfo.durationS)}</b>
+              <div style={{ marginTop: 6, opacity: 0.7, fontSize: 11 }}>{routeInfo.note}</div>
+            </div>
+          ) : null}
         </div>
-    );
+      ) : null}
+
+      {/* ADMIN menu toggle */}
+      {isAdmin ? (
+        <div style={handleStyle} onClick={() => setPanelOpen((v) => !v)}>
+          {panelOpen ? "⟨" : "⟩"} Меню
+        </div>
+      ) : null}
+
+      {/* ADMIN panel */}
+      {isAdmin ? (
+        <div style={panelStyle}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ fontWeight: 900, flex: 1 }}>
+              Админ панель{" "}
+              {pendingCount ? <span style={{ color: "#b00020" }}>• pending {pendingCount}</span> : null}
+            </div>
+
+            <button
+              onClick={resetRole}
+              style={{
+                border: "1px solid #ddd",
+                background: "white",
+                borderRadius: 10,
+                padding: "6px 10px",
+                cursor: "pointer",
+                fontWeight: 900,
+              }}
+            >
+              Сменить режим
+            </button>
+
+            <button
+              onClick={() => setPanelOpen(false)}
+              style={{
+                border: "1px solid #ddd",
+                background: "white",
+                borderRadius: 10,
+                padding: "6px 10px",
+                cursor: "pointer",
+                fontWeight: 900,
+              }}
+            >
+              ✕
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 10, marginBottom: 10 }}>
+            <button
+              onClick={() => setMode("addThreat")}
+              style={{
+                flex: 1,
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 800,
+                background: mode === "addThreat" ? "#f2f2f2" : "white",
+              }}
+            >
+              Угроза
+            </button>
+            <button
+              onClick={() => setMode("addSafe")}
+              style={{
+                flex: 1,
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 800,
+                background: mode === "addSafe" ? "#f2f2f2" : "white",
+              }}
+            >
+              Safe-зона
+            </button>
+            <button
+              onClick={() => setMode("reports")}
+              style={{
+                flex: 1,
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 800,
+                background: mode === "reports" ? "#f2f2f2" : "white",
+              }}
+            >
+              Репорты
+              {pendingCount ? <span style={{ marginLeft: 6, color: "#b00020" }}>({pendingCount})</span> : null}
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            <button
+              onClick={() => setMode("start")}
+              style={{
+                flex: 1,
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 800,
+                background: mode === "start" ? "#f2f2f2" : "white",
+              }}
+            >
+              Start
+            </button>
+            <button
+              onClick={() => setMode("end")}
+              style={{
+                flex: 1,
+                padding: 10,
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                fontWeight: 800,
+                background: mode === "end" ? "#f2f2f2" : "white",
+              }}
+            >
+              End
+            </button>
+          </div>
+
+          {mode === "reports" ? (
+            <div style={{ marginTop: 2 }}>
+              <div style={{ fontSize: 13, fontWeight: 900, marginBottom: 6 }}>Pending репорты</div>
+              <div style={{ maxHeight: 260, overflow: "auto", border: "1px solid #eee", borderRadius: 12 }}>
+                {childReports.filter((r) => r.status === "pending").length === 0 ? (
+                  <div style={{ padding: 10, fontSize: 12, opacity: 0.7 }}>Нет pending-репортов</div>
+                ) : (
+                  childReports
+                    .filter((r) => r.status === "pending")
+                    .map((r) => {
+                      const t = THREAT_TYPES.find((x) => x.key === r.threatKey);
+                      return (
+                        <div key={r.id} style={{ padding: 10, borderBottom: "1px solid #eee" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ fontWeight: 1000 }}>
+                              {t?.icon || "⚠️"} {t?.label || r.threatKey}
+                            </div>
+                            <div style={{ marginLeft: "auto", fontSize: 12, opacity: 0.7 }}>sev {r.severity}</div>
+                          </div>
+                          {r.note ? <div style={{ marginTop: 6, fontSize: 12 }}>{r.note}</div> : null}
+                          <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                            <button
+                              onClick={() => acceptReport(r.id)}
+                              style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #ddd", cursor: "pointer", fontWeight: 1000 }}
+                            >
+                              ✅ Принять
+                            </button>
+                            <button
+                              onClick={() => rejectReport(r.id)}
+                              style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #ddd", cursor: "pointer", fontWeight: 1000 }}
+                            >
+                              ❌ Отклонить
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
+                Важно: на маршрутизацию влияют только админ-угрозы и одобренные репорты (мягко).
+              </div>
+            </div>
+          ) : null}
+
+          {mode === "addThreat" ? (
+            <>
+              <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>Тип угрозы</div>
+              <select
+                value={threatKey}
+                onChange={(e) => setThreatKey(e.target.value)}
+                style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
+              >
+                {THREAT_TYPES.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.icon} {t.label} (base {t.baseWeight})
+                  </option>
+                ))}
+              </select>
+
+              <div style={{ marginTop: 8, fontSize: 13, fontWeight: 800 }}>
+                Насколько опасно сейчас: <b>{userSeverity}</b>
+              </div>
+              <input
+                type="range"
+                min="1"
+                max="5"
+                step="1"
+                value={userSeverity}
+                onChange={(e) => setUserSeverity(Number(e.target.value))}
+                style={{ width: "100%" }}
+              />
+
+              <div style={{ marginTop: 8, fontSize: 13, fontWeight: 800 }}>Источник</div>
+              <select
+                value={sourceKey}
+                onChange={(e) => setSourceKey(e.target.value)}
+                style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
+              >
+                {SOURCE_TYPES.map((s) => (
+                  <option key={s.key} value={s.key}>
+                    {s.label} (x{s.factor})
+                  </option>
+                ))}
+              </select>
+
+              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
+                Итог: riskScore <b>{previewRisk.riskScore.toFixed(2)}</b> → severity{" "}
+                <b style={{ color: severityColor(previewRisk.severity) }}>{previewRisk.severity}</b>
+              </div>
+
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Комментарий (необязательно)"
+                style={{
+                  width: "100%",
+                  marginTop: 8,
+                  padding: 10,
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  minHeight: 60,
+                  resize: "vertical",
+                }}
+              />
+            </>
+          ) : null}
+
+          {mode === "addSafe" ? (
+            <>
+              <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>Тип safe-зоны</div>
+              <select
+                value={safeTypeKey}
+                onChange={(e) => setSafeTypeKey(e.target.value)}
+                style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
+              >
+                {SAFE_ZONE_TYPES.map((z) => (
+                  <option key={z.key} value={z.key}>
+                    {z.icon} {z.label} (радиус {z.radiusM}м, +{z.safety}/5)
+                  </option>
+                ))}
+              </select>
+
+              <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
+                Клик по карте добавит:{" "}
+                <b>
+                  {safeType.icon} {safeType.label}
+                </b>{" "}
+                • радиус <b>{safeType.radiusM}м</b>
+              </div>
+            </>
+          ) : null}
+
+          <div style={{ marginTop: 12, fontSize: 13, fontWeight: 900 }}>Обход опасностей</div>
+
+          <div style={{ fontSize: 12, marginTop: 6 }}>
+            Обходить начиная с severity: <b>{minAvoidSeverity}</b>{" "}
+            <span style={{ opacity: 0.7 }}>
+              (админ точек: <b>{qualifiesCount}</b>)
+            </span>
+          </div>
+          <input
+            type="range"
+            min="1"
+            max="5"
+            step="1"
+            value={minAvoidSeverity}
+            onChange={(e) => setMinAvoidSeverity(Number(e.target.value))}
+            style={{ width: "100%" }}
+          />
+
+          <div style={{ fontSize: 12, marginTop: 6 }}>
+            Множитель радиуса: <b>{Number(radiusMultiplier).toFixed(2)}</b>
+          </div>
+          <input
+            type="range"
+            min="0.6"
+            max="2.5"
+            step="0.05"
+            value={radiusMultiplier}
+            onChange={(e) => setRadiusMultiplier(Number(e.target.value))}
+            style={{ width: "100%" }}
+          />
+
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button
+              onClick={clearThreats}
+              style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #ddd", cursor: "pointer", fontWeight: 900 }}
+            >
+              Очистить угрозы
+            </button>
+            <button
+              onClick={clearSafeZones}
+              style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #ddd", cursor: "pointer", fontWeight: 900 }}
+            >
+              Очистить safe-зоны
+            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button
+              onClick={() => {
+                setStart(null);
+                setEnd(null);
+                clearRoute();
+              }}
+              style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #ddd", cursor: "pointer", fontWeight: 900 }}
+            >
+              Сброс Start/End
+            </button>
+
+            <button
+              onClick={buildSafeRoute}
+              style={{ flex: 1, padding: 10, borderRadius: 10, border: "1px solid #ddd", cursor: "pointer", fontWeight: 1000 }}
+            >
+              {routingState.loading ? "Строю..." : "Маршрут"}
+            </button>
+          </div>
+
+          {routingState.error ? (
+            <div style={{ marginTop: 8, fontSize: 12, color: "#b00020", whiteSpace: "pre-wrap" }}>
+              {routingState.error}
+            </div>
+          ) : null}
+
+          {routeInfo ? (
+            <div style={{ marginTop: 8, fontSize: 12 }}>
+              Длина: <b>{fmtDistance(routeInfo.distanceM)}</b> • Время: <b>{fmtDuration(routeInfo.durationS)}</b>
+              <br />
+              <span style={{ opacity: 0.75 }}>{routeInfo.note}</span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* MAP */}
+      <MapContainer center={center} zoom={13} style={{ height: "100%", width: "100%" }} zoomControl={false}>
+        <ZoomControl position="topright" />
+        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+
+        <BoundsTracker onBounds={setBounds} />
+
+        {/* heatmap: админ угрозы + слабая добавка от репортов */}
+        <HeatmapLayer
+          points={[
+            ...threatPoints,
+            ...visibleReports.map((r) => ({ ...r, intensity: sevToIntensity(r.severity) * 0.25 })),
+          ]}
+        />
+
+        <ClickHandler
+          mode={
+            isChild
+              ? mode === "end"
+                ? "end"
+                : mode === "report"
+                ? "report"
+                : "start"
+              : mode
+          }
+          onAddThreat={isAdmin ? addThreat : () => {}}
+          onAddSafe={isAdmin ? addSafe : () => {}}
+          onAddReport={isChild ? addChildReport : () => {}}
+          onSetStart={(ll) => {
+            setStart({ lat: ll.lat, lng: ll.lng });
+            setMode("end");
+          }}
+          onSetEnd={(ll) => {
+            setEnd({ lat: ll.lat, lng: ll.lng });
+            setMode(isChild ? "start" : "addThreat");
+          }}
+        />
+
+        {routeLatLngs.length ? <Polyline positions={routeLatLngs} pathOptions={{ weight: 6, opacity: 0.9 }} /> : null}
+
+        {start ? <Marker position={[start.lat, start.lng]} icon={startIcon} /> : null}
+        {end ? <Marker position={[end.lat, end.lng]} icon={endIcon} /> : null}
+
+        {/* safe zones */}
+        {safeZones.map((z) => (
+          <Circle
+            key={z.id}
+            center={[z.lat, z.lng]}
+            radius={Number(z.radiusM)}
+            pathOptions={{ color: safeColor(z.safety), weight: 2, opacity: 0.6, fill: true, fillOpacity: 0.1 }}
+          />
+        ))}
+        {safeZones.map((z) => {
+          const icon = makeEmojiDivIcon({
+            emoji: z.icon || "🟦",
+            color: safeColor(z.safety),
+            glow: false,
+            size: 20,
+            border: 2,
+            font: 13,
+          });
+          return <Marker key={`safe_${z.id}`} position={[z.lat, z.lng]} icon={icon} />;
+        })}
+
+        {/* admin threats */}
+        {threatPoints.map((p) => {
+          const t = THREAT_TYPES.find((x) => x.key === p.threatKey);
+          const icon = makeEmojiDivIcon({
+            emoji: t?.icon || "⚠️",
+            color: severityColor(p.severity),
+            glow: true,
+            size: 22,
+            border: 2,
+            font: 14,
+          });
+          return <Marker key={`thr_${p.id}`} position={[p.lat, p.lng]} icon={icon} />;
+        })}
+
+        {/* child reports (полупрозрачные) */}
+        {visibleReports.map((r) => {
+          const t = THREAT_TYPES.find((x) => x.key === r.threatKey);
+          const col = severityColor(r.severity);
+          const isPending = r.status === "pending";
+
+          const icon = makeEmojiDivIcon({
+            emoji: isPending ? "📝" : t?.icon || "⚠️",
+            color: col,
+            glow: false,
+            size: 18,
+            border: 2,
+            font: 12,
+            opacity: reportOpacity,
+          });
+          return <Marker key={`rep_${r.id}`} position={[r.lat, r.lng]} icon={icon} />;
+        })}
+      </MapContainer>
+    </div>
+  );
 }
+
