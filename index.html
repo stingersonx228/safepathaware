@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeSchool Path: Risk-Aware Routing</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+    <div class="ui-panel">
+        <div class="header">
+            <h2>🛡️ TuraJol</h2>
+            <p id="time-status">Режим: ☀️ День</p>
+        </div>
+        
+        <div class="controls">
+            <button id="sos-btn" class="btn" style="background: #c0392b; color: white; font-weight: bold; font-size: 18px; margin-bottom: 15px; border: 2px solid #ff0000; box-shadow: 0 0 15px rgba(192, 57, 43, 0.5);">
+        🆘 ВЫЗОВ ПОЛИЦИИ (102)
+    </button>
+            <button id="toggle-time-btn" class="btn secondary">Переключить на Ночь 🌙</button>
+            <button id="report-btn" class="btn danger">🚨 Сообщить об угрозе</button>
+            
+            <hr style="margin: 15px 0; border: 0; border-top: 1px solid #bdc3c7;">
+            <div style="font-size: 12px; font-weight: bold; color: #7f8c8d; margin-bottom: 8px; text-transform: uppercase;">🛠 Режим Акимата (Инфраструктура)</div>
+            
+            <button id="dev-cctv-btn" class="btn" style="background: #2980b9; color: white;">📹 Поставить Камеру</button>
+            <button id="dev-guard-btn" class="btn" style="background: #8e44ad; color: white; margin-top: 10px;">👮 Поставить Охрану</button>
+            
+            <button id="clear-btn" class="btn" style="background: #95a5a6; color: white; margin-top: 15px;">🧹 Сбросить демо</button>
+        </div>
+
+        <div class="route-info">
+            <h3>Сравнение маршрутов:</h3>
+            <div id="route-fast-info" class="route-card">
+                <strong>Кратчайший путь (Серый)</strong>
+                <p>Риск: <span id="fast-risk">Считаем...</span></p>
+            </div>
+            <div id="route-safe-info" class="route-card safe-card">
+                <strong>Безопасный путь (Синий)</strong>
+                <p>Риск: <span id="safe-risk">Считаем...</span></p>
+            </div>
+        </div>
+    </div>
+    <div id="report-modal" class="modal-overlay hidden">
+        <div class="modal-content">
+            <h3>Что здесь не так?</h3>
+            <div class="threat-grid">
+                <button class="threat-btn" onclick="submitReport('Нет освещения')">💡 Нет освещения</button>
+                <button class="threat-btn" onclick="submitReport('Бродячие собаки')">🐕 Бродячие собаки</button>
+                <button class="threat-btn" onclick="submitReport('Опасный переход')">🚗 Опасный переход</button>
+                <button class="threat-btn" onclick="submitReport('Стройка/Пустырь')">🏗️ Стройка / Пустырь</button>
+            </div>
+            <button class="btn secondary" onclick="closeModal()">Отмена</button>
+        </div>
+    </div>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="js/data.js"></script>
+    <script src="js/engine.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
