@@ -1,2 +1,2 @@
 # safepathaware
-уаахахахаха султан какиш 
+уаахахахаха yers kakish
